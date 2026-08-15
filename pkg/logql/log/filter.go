@@ -698,6 +698,11 @@ func (s *RegexSimplifier) Simplify(reg *syntax.Regexp, isLabel bool) (MatcherFil
 	case syntax.OpAlternate:
 		return s.simplifyAlternate(reg, isLabel)
 	case syntax.OpConcat:
+		// Labels match whole values: only .*literal.* is safe as a contains
+		// filter, other shapes fall back to an anchored regexp.
+		if isLabel && !isContainsEquivalentConcat(reg) {
+			return nil, false
+		}
 		return s.simplifyConcat(reg, nil)
 	case syntax.OpCapture:
 		util.ClearCapture(reg)
@@ -716,9 +721,29 @@ func (s *RegexSimplifier) Simplify(reg *syntax.Regexp, isLabel bool) (MatcherFil
 			return ExistsFilter, true
 		}
 	case syntax.OpEmptyMatch:
+		if isLabel {
+			// anchored empty regexp matches only empty values.
+			return s.newEqualFilter(nil, false), true
+		}
 		return TrueFilter, true
 	}
 	return nil, false
+}
+
+// isContainsEquivalentConcat reports whether a concat regexp is .*literal.*,
+// the only concat shape where a contains filter matches whole label values.
+func isContainsEquivalentConcat(reg *syntax.Regexp) bool {
+	util.ClearCapture(reg.Sub...)
+	isDotStar := func(r *syntax.Regexp) bool {
+		return r.Op == syntax.OpStar && r.Sub[0].Op == syntax.OpAnyCharNotNL
+	}
+	subs := make([]*syntax.Regexp, 0, len(reg.Sub))
+	for _, sub := range reg.Sub {
+		if sub.Op != syntax.OpEmptyMatch {
+			subs = append(subs, sub)
+		}
+	}
+	return len(subs) == 3 && isDotStar(subs[0]) && subs[1].Op == syntax.OpLiteral && isDotStar(subs[2])
 }
 
 // simplifyAlternate simplifies, when possible, alternate regexp expressions such as:

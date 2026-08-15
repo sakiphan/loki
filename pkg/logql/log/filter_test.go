@@ -126,6 +126,49 @@ func allunicode() string {
 	return string(b)
 }
 
+func Test_SimplifiedLabelRegex(t *testing.T) {
+	// Label filter regexes must behave like anchored ^(?:re)$ regexps,
+	// simplified or not.
+	fixtures := []string{
+		"alpha", "prealpha", "alphabet", "al", "pha", "bar", "buzz", "barbuzz", "xbarx",
+		"foo", "foobar", "prefoo", "fooÏbar", "FoO", "ALPHA", "", "  ",
+	}
+	for _, re := range []string{
+		// one-sided patterns, must be anchored (issue #23892)
+		"al.*",
+		".*pha",
+		"(?i)AL.*",
+		"(?i).*PHA",
+		// factored alternates hit the same concat path
+		"bar|buzz",
+		"foo|foobar",
+		// unaffected shapes, must keep working
+		"alpha",
+		"foo|bar",
+		".*pha.*",
+		"(?i).*pha.*",
+		"pre.*ha",
+		"al[a-z]*",
+		".*",
+		"",
+	} {
+		for _, match := range []bool{true, false} {
+			t.Run(fmt.Sprintf("%s/match=%v", re, match), func(t *testing.T) {
+				anchored, err := newRegexpFilter("^(?:"+re+")$", re, match)
+				require.NoError(t, err, "invalid regex")
+
+				f, err := parseRegexpFilter(re, match, true)
+				require.NoError(t, err)
+
+				for _, value := range fixtures {
+					v := []byte(value)
+					require.Equal(t, anchored.Filter(v), f.Filter(v), "regexp %s failed on label value: %s", re, value)
+				}
+			})
+		}
+	}
+}
+
 func Test_TrueFilter(t *testing.T) {
 	empty := []byte("")
 	for _, test := range []struct {
